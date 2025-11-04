@@ -5,6 +5,13 @@ Este proyecto utiliza la **ESP32** como microcontrolador principal en tres difer
 
 ---
 
+<p align="center">
+  <img src="imagenes/invernadero.jpg" width="600"><br>
+  <em>Invernadero - Unidad de Cultivo</em>
+</p>
+
+---
+
 ## 🧰 Componentes Utilizados
 
 - 1 LilyGo T-SIM-A7670E  
