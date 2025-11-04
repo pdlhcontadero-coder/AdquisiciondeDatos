@@ -92,7 +92,11 @@ El sistema está conformado por **5 módulos**, de los cuales:
 </p>
 
 ---
+###  🔗 Repositorio relacionado
 
+📦 [Repositorio de base de datos y página web](https://github.com/pdlhcontadero-coder/PMLHC)
+
+---
 ## 👥 Autores
 
 - **Alejandro Díaz Igua**  
