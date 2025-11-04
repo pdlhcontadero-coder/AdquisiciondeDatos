@@ -28,7 +28,7 @@ Este proyecto utiliza la **ESP32** como microcontrolador principal en tres difer
 ## 🧠 Funcionamiento General
 
 El sistema está conformado por **5 módulos**, de los cuales:
-- **4 módulos emisores** se encargan de recolectar los datos de los sensores asignados y enviarlos mediante comunicación inalámbrica.
+- **4 módulos emisores** se encargan de recolectar los datos de los sensores asignados y enviarlos mediante el protocolo ESPNOW.
 - **1 módulo receptor (principal)** recibe toda la información de los emisores y la envía a una **base de datos** para su almacenamiento y análisis.
 
 ---
