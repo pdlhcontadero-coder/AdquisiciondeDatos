@@ -55,7 +55,8 @@ bool useBroadcastFallback = false;
 float lastTemp = NAN;
 bool haveECreading = false;
 // lastEC en µS/cm
-float lastEC = NAN;
+float lastEC_mS = NAN;
+float lastEC_uS = NAN;
 float lastVoltage = NAN;
 
 uint32_t seqSend = 1;
@@ -195,7 +196,7 @@ bool ensurePeerAdded() {
   esp_now_peer_info_t peer;
   memset(&peer, 0, sizeof(peer));
   memcpy(peer.peer_addr, peerMAC, 6);
-  peer.channel = 6;
+  peer.channel = 0;
   peer.encrypt = false;
 
   esp_err_t rc = esp_now_add_peer(&peer);
@@ -277,7 +278,7 @@ void drawMainScreen() {
   u8g2.clearBuffer();
 
   // 1) Estado ESP-NOW (línea superior, centrada)
-  u8g2.setFont(u8g2_font_ncenB08_tr); // fuente más grande
+  u8g2.setFont(u8g2_font_ncenB08_tr);  // fuente más grande
   const char* status = (lastSendStatus == ESP_NOW_SEND_SUCCESS) ? "ESP-NOW: OK" : "ESP-NOW: ERR";
   int status_w = u8g2.getStrWidth(status);
   u8g2.drawStr((128 - status_w) / 2, 14, status);
@@ -285,14 +286,11 @@ void drawMainScreen() {
   // 2) EC (segunda línea) -- mostrar en µS/cm usando lastEC
   u8g2.setFont(u8g2_font_6x10_tf);
   char buf[40];
-  if (haveECreading && !isnan(lastEC)) {
-    // lastEC está en µS/cm; mostramos sin decimales si es >1000, con 1 decimal si <1000
-    if (lastEC >= 1000.0f) {
-      // valores grandes: mostrar sin decimales
-      snprintf(buf, sizeof(buf), "EC: %.0f uS/cm", lastEC);
+  if (haveECreading && !isnan(lastEC_uS)) {
+    if (lastEC_uS >= 1000.0f) {
+      snprintf(buf, sizeof(buf), "EC: %.0f uS/cm", lastEC_uS);
     } else {
-      // valores pequeños: 1 decimal
-      snprintf(buf, sizeof(buf), "EC: %.1f uS/cm", lastEC);
+      snprintf(buf, sizeof(buf), "EC: %.1f uS/cm", lastEC_uS);
     }
   } else {
     snprintf(buf, sizeof(buf), "EC: --");
@@ -347,22 +345,49 @@ void setup() {
   // Load calibration
   loadCalibrationPrefs();
 
-  // WiFi + ESP-NOW
-  WiFi.mode(WIFI_STA);
-  delay(50);
-  esp_err_t rc = esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
-  if (rc == ESP_OK) Serial.println("esp_wifi_set_channel -> OK (chan 6)");
-  else Serial.printf("esp_wifi_set_channel -> ERROR 0x%08X\n", (unsigned)rc);
+  // ---------------- WIFI + ESP NOW ----------------
 
-  Serial.print("Local MAC: ");
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+
+  Serial.println("Iniciando WiFi...");
+
+  WiFi.begin("TU_WIFI", "TU_PASSWORD");
+
+  unsigned long wifiStart = millis();
+
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 8000) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("");
+    Serial.println("WiFi conectado");
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("");
+    Serial.println("WiFi no conectado -> ESP NOW seguirá funcionando");
+  }
+
+  Serial.print("MAC del ESP32: ");
   Serial.println(WiFi.macAddress());
 
+  // ---------- ESP NOW ----------
+
   if (esp_now_init() != ESP_OK) {
-    Serial.println("Error init ESP-NOW");
-  } else {
-    esp_now_register_send_cb(onSendCallback);
-    ensurePeerAdded();
+    Serial.println("Error iniciando ESP-NOW");
+    return;
   }
+
+  Serial.println("ESP NOW iniciado correctamente");
+
+  esp_now_register_send_cb(onSendCallback);
+
+  // agregar peer
+  ensurePeerAdded();
 
   drawMainScreen();
 }
@@ -372,6 +397,21 @@ void loop() {
   static unsigned long lastTempTick = 0;
   static unsigned long lastBtnEnter_ms = 0, lastBtnSave_ms = 0, lastBtnExit_ms = 0;
   unsigned long now = millis();
+
+
+  // ---------- Reconexión WiFi automática ----------
+
+  static unsigned long lastWifiCheck = 0;
+
+  if (millis() - lastWifiCheck > 5000) {
+    lastWifiCheck = millis();
+
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("Reconectando WiFi...");
+      WiFi.disconnect();
+      WiFi.begin("NombreDeTuRed", "ClaveDeTuRed");
+    }
+  }
 
   // 1) Leer temperatura cada 1s
   if (now - lastTempTick >= 1000UL) {
@@ -403,7 +443,7 @@ void loop() {
 
     if (inCalibration) {
       // --- Calibración ---
-      float volts = readADSVoltageAvg(10, 12); // V promedio
+      float volts = readADSVoltageAvg(10, 12);  // V promedio
       float t = isnan(lastTemp) ? 25.0f : lastTemp;
       Serial.printf("Calibration capture (avg): V=%.6f V, T=%.2f\n", volts, t);
 
@@ -423,32 +463,17 @@ void loop() {
                     ecLibExpects_mV ? "mV" : "V", ecEst_mS, ecEst_mS * 1000.0f);
 
       // Referencias y tolerancia
-      const float REF1 = 1.413f;   // 1413 µS/cm -> 1.413 mS/cm
-      const float REF2 = 12.88f;   // 12.88 mS/cm
-      const float TOLERANCE = 0.20f; // 20% (un poco más permisivo)
+      const float REF1 = 1.413f;      // 1413 µS/cm -> 1.413 mS/cm
+      const float REF2 = 12.88f;      // 12.88 mS/cm
+      const float TOLERANCE = 0.80f;  // 20% (un poco más permisivo)
 
-      bool detected = false;
-      float detectedRef = 0.0f;
-      if (isfinite(ecEst_mS)) {
-        if (fabs(ecEst_mS - REF1) <= REF1 * TOLERANCE) {
-          detected = true;
-          detectedRef = REF1;
-          Serial.println("Detected buffer: 1413 uS/cm (1.413 mS/cm)");
-        } else if (fabs(ecEst_mS - REF2) <= REF2 * TOLERANCE) {
-          detected = true;
-          detectedRef = REF2;
-          Serial.println("Detected buffer: 12.88 mS/cm");
-        } else {
-          detected = false;
-          Serial.println("Buffer detection AMBIGUO (no close match)");
-        }
-      } else {
-        Serial.println("ecSensor.readEC returned NaN during detection.");
-      }
+      bool detected = true;
+      float detectedRef = 1.413f; // Forzamos el buffer de 1413 uS/cm
+      Serial.println("Autodetección omitida: Forzando calibración a 1413 uS/cm");
 
       // Si detectó, actualizamos cal_ec_value; si no, conservamos el valor anterior
       if (detected) {
-        cal_ec_value = detectedRef; // mS/cm
+        cal_ec_value = detectedRef;  // mS/cm
       } else {
         Serial.println("No detection confident: keeping previous cal_ec_value.");
       }
@@ -488,7 +513,7 @@ void loop() {
 
     } else {
       // --- Lectura manual EC (SAVE fuera de calibración) ---
-      float volts = readADSVoltageAvg(6, 12); // V promedio
+      float volts = readADSVoltageAvg(6, 12);  // V promedio
       float t = isnan(lastTemp) ? 25.0f : lastTemp;
       Serial.printf("Manual EC read (avg): V=%.6f V, T=%.2f\n", volts, t);
       lastVoltage = volts;
@@ -506,9 +531,10 @@ void loop() {
                     ecLibExpects_mV ? "mV" : "V", ecVal_mS, ecVal_mS * 1000.0f);
 
       if (!isnan(ecVal_mS) && isfinite(ecVal_mS)) {
-        lastEC = ecVal_mS * 1000.0f; // µS/cm
+        lastEC_mS = ecVal_mS;
+        lastEC_uS = ecVal_mS * 1000.0f; // µS/cm
         haveECreading = true;
-        Serial.printf("EC read: %.6f mS/cm == %.1f uS/cm (used %s)\n", ecVal_mS, lastEC, ecLibExpects_mV ? "mV" : "V");
+        Serial.printf("EC read: %.6f mS/cm == %.1f uS/cm (used %s)\n", ecVal_mS, lastEC_uS, ecLibExpects_mV ? "mV" : "V");
       } else {
         Serial.println("EC read returned NaN or invalid");
         haveECreading = false;
@@ -527,10 +553,10 @@ void loop() {
       Serial.println("Calibration aborted / exited");
     } else {
       // En modo normal: enviar la última lectura de EC por ESP-NOW
-      if (haveECreading && !isnan(lastEC)) {
+      if (haveECreading && !isnan(lastEC_uS)) {
         float t = isnan(lastTemp) ? 25.0f : lastTemp;
         // enviamos EC+temp con kind==2 (convención)
-        sendECMessage(lastEC, t, KIND_EC);
+        sendECMessage(lastEC_uS, t, KIND_EC);
       } else {
         Serial.println("No EC reading available to send (press SAVE to read first)");
         u8g2.clearBuffer();

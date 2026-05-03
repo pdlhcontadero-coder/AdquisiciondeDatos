@@ -227,24 +227,35 @@ void setup() {
   loadCalibrationFromPrefs();
 
   WiFi.mode(WIFI_STA);
-  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
+  WiFi.disconnect();
+  delay(200);
+
+  esp_wifi_set_promiscuous(true);
+  esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_promiscuous(false);
+  delay(50);
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("Error initializing ESP-NOW");
     espNowOk = false;
   } else {
+
     Serial.println("ESP-NOW init OK");
     espNowOk = true;
+
     esp_now_register_send_cb(onSendCallback);
 
     esp_now_peer_info_t peerInfo;
     memset(&peerInfo, 0, sizeof(peerInfo));
+
     memcpy(peerInfo.peer_addr, peerMAC, 6);
-    peerInfo.channel = 6;
+    peerInfo.channel = 1;
     peerInfo.encrypt = false;
 
-    if (esp_now_add_peer(&peerInfo) != ESP_OK) Serial.println("Failed to add peer");
-    else Serial.println("Peer added");
+    if (esp_now_add_peer(&peerInfo) != ESP_OK)
+      Serial.println("Failed to add peer");
+    else
+      Serial.println("Peer added");
   }
 
   drawMainScreen(false, false);
